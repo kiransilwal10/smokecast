@@ -95,13 +95,11 @@ def main():
     faulty, episodes = inject(pm, rows, np.random.default_rng(0))
     score_v = np.load(args.runs / "smokecast" / "score_virtual.npy", mmap_mode="r")[1]
     score_o = np.load(args.runs / "smokecast" / "score_own.npy", mmap_mode="r")[1]
-    thr_v = np.load(args.runs / "smokecast" / "threshold_virtual.npy")
-    thr_o = np.load(args.runs / "smokecast" / "threshold_own.npy")
     virtual = np.load(args.runs / "smokecast" / "virtual_faulty.npy", mmap_mode="r")
     # a typical drift, not the best one: the episode with the median peak score relative to the alarm level
     drifts = [e for e in episodes if e["kind"] == "drift"]
     peak = [np.nanmax(np.asarray(score_v[e["start"] - rows[0]:e["start"] - rows[0] + EPISODE_HOURS, e["site"]],
-                                 np.float32)) / thr_v[e["site"]] for e in drifts]
+                                 np.float32)) for e in drifts]
     ep = drifts[int(np.argsort(peak)[len(peak) // 2])]
     n, i0 = ep["site"], ep["start"] - rows[0]
     span = np.arange(i0 - 72, i0 + EPISODE_HOURS + 48)
@@ -110,7 +108,7 @@ def main():
                       np.asarray(virtual[span, n], np.float32),
                       {"Virtual sensor (SmokeCast)": np.asarray(score_v[span, n], np.float32),
                        "Own history": np.asarray(score_o[span, n], np.float32)},
-                      {"Virtual sensor (SmokeCast)": thr_v[n], "Own history": thr_o[n]}, (72, 72 + EPISODE_HOURS),
+                      {"Virtual sensor (SmokeCast)": 1.0, "Own history": 1.0}, (72, 72 + EPISODE_HOURS),
                       f"Injected drift at {site.get('name') or site['site']}, {site.get('city', '')} {site.get('state', '')}",
                       FIG / "fault_example.png")
     print(json.dumps(peaks, indent=1))

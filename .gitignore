@@ -13,3 +13,4 @@ kaggle/dataset/code*
 kaggle/code_dataset/*.tar.gz
 kaggle/out*/
 .playwright-mcp/
+runs_laptop/

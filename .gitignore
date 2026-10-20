@@ -8,3 +8,6 @@ serving/
 *.egg-info/
 .DS_Store
 *.log
+kaggle/dataset/processed/
+kaggle/dataset/code*
+kaggle/out*/

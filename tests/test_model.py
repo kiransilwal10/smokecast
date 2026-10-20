@@ -53,7 +53,7 @@ def test_wind_edges_only_reach_downwind():
 
 def _batch(b, t, n):
     torch.manual_seed(1)
-    return {"x": torch.randn(b, t, n, len(CHANNELS)), "base": torch.randn(b, n),
+    return {"x": torch.randn(b, t, n, len(CHANNELS)), "base": torch.randn(b, n), "base_spatial": torch.randn(b, n),
             "time": torch.randn(b, 6), "node_mask": torch.zeros(b, n, dtype=torch.bool)}
 
 

@@ -25,7 +25,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-from .geo import offset_point, wind_components
+from .geo import haversine_km, offset_point, wind_components
 
 CHANNELS = ("pm", "pm_valid", "u", "v", "temp", "dewpoint_dep", "slp", "precip", "met_valid",
             "smoke_here", "smoke_upwind")
@@ -33,6 +33,7 @@ PM, PM_VALID, U, V = 0, 1, 2, 3
 SMOKE = (9, 10)
 UPWIND_KM = (100.0, 200.0, 300.0)
 FILL_HOURS = 2
+IDW_NEIGHBOURS = 12  # about 8 stay visible when 30% of sites are hidden
 USG = 35.4  # µg/m³: hourly PM2.5 above this is "unhealthy for sensitive groups" on the AQI scale
 
 
@@ -157,6 +158,11 @@ class Batcher:
     ``mask_frac`` hides that fraction of sites from the model (their PM2.5 history is zeroed and
     flagged invalid). The model must then reconstruct their current reading from the neighbours,
     which is the virtual sensor used for fault detection, and forecast them without their own data.
+
+    Two starting points are returned for the model's residual: ``base`` is the site's own current
+    reading (0, the site mean, when it is hidden or offline), and ``base_spatial`` replaces that 0
+    with an inverse-distance-weighted estimate from the visible neighbours. Graph models start from
+    ``base_spatial``, so their virtual sensor is a learned correction to plain interpolation.
     """
 
     def __init__(self, data: SmokeData, history: int, horizon: int, device, mask_frac: float = 0.0):
@@ -166,6 +172,15 @@ class Batcher:
         self.y = torch.as_tensor(np.nan_to_num((pm - data.mu) / data.sigma), device=device)
         self.y_valid = torch.as_tensor(np.isfinite(pm), device=device)
         self.time = torch.as_tensor(time_features(data.index), device=device)
+        self.mu = torch.as_tensor(data.mu, device=device)
+        self.sigma = torch.as_tensor(data.sigma, device=device)
+        d = haversine_km(data.lat[:, None], data.lon[:, None], data.lat[None], data.lon[None])
+        np.fill_diagonal(d, np.inf)
+        rows = np.arange(len(d))[:, None]
+        near = np.argsort(d, 1)[:, :IDW_NEIGHBOURS]
+        w = np.zeros_like(d)
+        w[rows, near] = 1.0 / np.maximum(d[rows, near], 1.0) ** 2
+        self.idw = torch.as_tensor(w.T.astype(np.float32), device=device)  # pm (B, N) @ idw -> estimates
 
     def __call__(self, t0: np.ndarray, node_mask: torch.Tensor | None = None, train: bool = False) -> dict:
         t0 = torch.as_tensor(t0, device=self.device)
@@ -179,9 +194,14 @@ class Batcher:
         keep = (~node_mask).float()[:, None, :]
         x[..., PM] *= keep
         x[..., PM_VALID] *= keep
-        base = x[:, -1, :, PM] * x[:, -1, :, PM_VALID]
+        now = x[:, -1, :, PM_VALID]
+        base = x[:, -1, :, PM] * now
+        weight = now @ self.idw
+        nearby = ((x[:, -1, :, PM] * self.sigma + self.mu) * now) @ self.idw / weight.clamp_min(1e-12)
+        nearby = torch.where(weight > 0, nearby, self.mu)
+        base_spatial = torch.where(now > 0.5, base, (nearby - self.mu) / self.sigma)
         return {
-            "x": x, "base": base, "node_mask": node_mask, "time": self.time[t0],
+            "x": x, "base": base, "base_spatial": base_spatial, "node_mask": node_mask, "time": self.time[t0],
             "y": self.y[ahead],                     # (B, H + 1, N), lead 0 is the current hour
             "y_valid": self.y_valid[ahead], "t0": t0,
         }

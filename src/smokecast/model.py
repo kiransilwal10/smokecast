@@ -13,7 +13,9 @@ it with what the sensor actually reports is how faults are detected.
 
 As in SurgeCast, the decoder output is added to a linear forecast from the raw
 inputs and to the current reading, so the network learns a correction on top
-of persistence and a linear autoregressive model.
+of persistence and a linear autoregressive model. For a hidden or offline site
+the current reading is replaced by inverse-distance interpolation from its
+neighbours, so the virtual sensor is a learned correction to interpolation.
 """
 
 from __future__ import annotations
@@ -80,6 +82,7 @@ class SmokeCast(nn.Module):
             attention.append(alpha)
 
         flat = torch.cat([x.permute(0, 2, 1, 3).reshape(B, N, T * C), time], -1)
-        out = self.decoder(torch.cat([h, time], -1)) + self.linear(flat) + batch["base"][..., None]
+        base = batch["base_spatial"] if self.use_graph else batch["base"]  # a per-site model must not see neighbours
+        out = self.decoder(torch.cat([h, time], -1)) + self.linear(flat) + base[..., None]
         out = out.transpose(1, 2)  # (B, H + 1, N)
         return (out, attention) if return_attention else out

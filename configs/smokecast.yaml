@@ -1,0 +1,26 @@
+# Full model: wind-aware graph + satellite smoke inputs.
+name: smokecast
+data_dir: data/processed
+history: 48   # hours of past observations per site
+horizon: 72   # forecast leads 1..72 h (lead 0 is the virtual-sensor estimate)
+
+model:
+  dim: 128
+  layers: 4
+  heads: 4
+  k: 8              # nearest neighbours per site before symmetrising
+  use_graph: true
+  wind_edges: true
+  use_smoke: true
+
+train:
+  epochs: 14
+  steps_per_epoch: 600
+  batch_size: 24
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  event_boost: 4.0   # smoke / high-PM hours are sampled 5x more often
+  mask_frac: 0.15    # sites hidden per sample, trains the virtual sensor
+  patience: 4        # stop after this many epochs without a better validation loss
+  val_stride: 6
+  seed: 0

@@ -1,0 +1,15 @@
+services:
+  smokecast:
+    build: .
+    image: smokecast:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./serving:/app/serving:ro   # written by scripts/export_serving.py
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped

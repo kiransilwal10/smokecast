@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SmokeCast</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root { --ink: #1f2328; --muted: #6e7781; --line: #d0d7de; --bg: #ffffff; --panel: #f6f8fa; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--ink); background: var(--bg); }
+  header { padding: 12px 16px; border-bottom: 1px solid var(--line); display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin: 0; }
+  header .sub { color: var(--muted); }
+  main { display: grid; grid-template-columns: 1fr 340px; height: calc(100vh - 54px); }
+  #map { height: 100%; }
+  aside { border-left: 1px solid var(--line); overflow-y: auto; padding: 12px 16px; background: var(--panel); }
+  label { display: block; font-weight: 600; margin: 10px 0 4px; }
+  input, select, button { font: inherit; }
+  input[type=datetime-local], select { width: 100%; padding: 4px 6px; }
+  input[type=range] { width: 100%; }
+  .presets button { margin: 2px 4px 2px 0; padding: 2px 8px; border: 1px solid var(--line); background: #fff; border-radius: 4px; cursor: pointer; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 18px 0 6px; }
+  ul { list-style: none; padding: 0; margin: 0; }
+  li { padding: 4px 0; border-bottom: 1px solid var(--line); }
+  .legend span { display: inline-block; width: 12px; height: 12px; border-radius: 6px; margin-right: 4px; vertical-align: -2px; }
+  .muted { color: var(--muted); }
+  .flag { color: #cf222e; font-weight: 600; }
+  @media (max-width: 760px) { main { grid-template-columns: 1fr; grid-template-rows: 55vh auto; height: auto; } aside { border-left: 0; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>SmokeCast</h1>
+  <span class="sub">PM2.5 forecasts, smoke alerts and sensor health, replayed from 2023–2025</span>
+</header>
+<main>
+  <div id="map"></div>
+  <aside>
+    <label for="issued">Forecast issued (UTC)</label>
+    <input id="issued" type="datetime-local" step="3600" value="2023-06-06T12:00">
+    <div class="presets">
+      <button data-t="2023-06-06T12:00">NYC smoke, Jun 2023</button>
+      <button data-t="2023-06-27T00:00">Chicago, Jun 2023</button>
+      <button data-t="2025-06-05T00:00">Midwest, Jun 2025</button>
+    </div>
+    <label for="lead">Lead time: <span id="leadText">24 h</span></label>
+    <input id="lead" type="range" min="0" max="72" value="24">
+    <div class="legend muted" id="legend"></div>
+
+    <h2>Alerts, next 24 h</h2>
+    <ul id="alerts"><li class="muted">loading…</li></ul>
+
+    <h2>Sensor health</h2>
+    <label for="simulate">Break a sensor (adds +15 µg/m³ for 48 h)</label>
+    <select id="simulate"><option value="">none</option></select>
+    <ul id="sensors"><li class="muted">loading…</li></ul>
+  </aside>
+</main>
+<script>
+const AQI = [[9.0, "#00e400", "Good"], [35.4, "#ffff00", "Moderate"], [55.4, "#ff7e00", "Unhealthy for sensitive groups"],
+             [125.4, "#ff0000", "Unhealthy"], [225.4, "#8f3f97", "Very unhealthy"], [Infinity, "#7e0023", "Hazardous"]];
+const colour = v => v == null ? "#bbbbbb" : AQI.find(([hi]) => v <= hi)[1];
+document.getElementById("legend").innerHTML = AQI.map(([hi, c, name]) => `<div><span style="background:${c}"></span>${name}</div>`).join("");
+
+const map = L.map("map").setView([39.5, -82], 5);
+L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
+  {attribution: "&copy; OpenStreetMap, &copy; CARTO", maxZoom: 12}).addTo(map);
+
+let sites = [], markers = {}, latest = null;
+const label = s => `${s.name || s.site}${s.city ? ", " + s.city : ""}${s.state ? ", " + s.state : ""}`;
+
+async function getJSON(url) { const r = await fetch(url); if (!r.ok) throw new Error(await r.text()); return r.json(); }
+
+function paint() {
+  if (!latest) return;
+  const lead = +document.getElementById("lead").value;
+  document.getElementById("leadText").textContent = lead === 0 ? "now" : `${lead} h`;
+  for (const s of latest.sites) {
+    const v = s.forecast[lead];
+    markers[s.site].setStyle({fillColor: colour(v)}).setTooltipContent(
+      `${label(sites.find(x => x.site === s.site))}<br>forecast ${v} µg/m³` + (s.observed_now != null ? `<br>reading now ${s.observed_now}` : ""));
+  }
+}
+
+async function refresh() {
+  const issued = document.getElementById("issued").value;
+  const sim = document.getElementById("simulate").value;
+  try {
+    latest = await getJSON(`/api/forecast?issued=${issued}`);
+    paint();
+    const a = await getJSON(`/api/alerts?issued=${issued}&within_h=24`);
+    document.getElementById("alerts").innerHTML = a.alerts.length ? a.alerts.map(s =>
+      `<li><b>${label(s)}</b><br><span class="muted">above ${a.threshold_ugm3} in ${s.first_exceedance_in_h} h, peak ${s.peak_ugm3} µg/m³</span></li>`).join("")
+      : `<li class="muted">no site forecast above ${a.threshold_ugm3} µg/m³</li>`;
+    const h = await getJSON(`/api/sensors?issued=${issued}` + (sim ? `&simulate_fault=${sim}` : ""));
+    const bad = h.sensors.filter(s => s.flagged);
+    document.getElementById("sensors").innerHTML = bad.length ? bad.map(s =>
+      `<li class="flag">${label(sites.find(x => x.site === s.site))}<br><span class="muted">disagrees with its neighbours: score ${s.score} (alarm at ${h.alarm_level})</span></li>`).join("")
+      : `<li class="muted">all ${h.sensors.length} sensors agree with their neighbours</li>`;
+  } catch (err) {
+    document.getElementById("alerts").innerHTML = `<li class="flag">${err.message}</li>`;
+  }
+}
+
+(async () => {
+  sites = await getJSON("/api/sites");
+  for (const s of sites) {
+    markers[s.site] = L.circleMarker([s.lat, s.lon], {radius: 6, weight: 1, color: "#1f2328", fillOpacity: .9}).bindTooltip("").addTo(map);
+  }
+  document.getElementById("simulate").innerHTML += sites.map(s => `<option value="${s.site}">${label(s)}</option>`).join("");
+  document.querySelectorAll(".presets button").forEach(b => b.onclick = () => { document.getElementById("issued").value = b.dataset.t; refresh(); });
+  document.getElementById("issued").onchange = refresh;
+  document.getElementById("simulate").onchange = refresh;
+  document.getElementById("lead").oninput = paint;
+  refresh();
+})();
+</script>
+</body>
+</html>

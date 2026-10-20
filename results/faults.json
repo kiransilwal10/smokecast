@@ -1,0 +1,87 @@
+{
+ "episodes": 295,
+ "false_alarm_rate": 0.005,
+ "detectors": {
+  "Virtual sensor (SmokeCast)": {
+   "by_fault": {
+    "offset": {
+     "detected": 0.6805555555555556,
+     "median_hours_to_flag": 17.0,
+     "episodes": 72
+    },
+    "drift": {
+     "detected": 0.8947368421052632,
+     "median_hours_to_flag": 71.5,
+     "episodes": 76
+    },
+    "stuck": {
+     "detected": 0.2361111111111111,
+     "median_hours_to_flag": 39.0,
+     "episodes": 72
+    },
+    "noise": {
+     "detected": 1.0,
+     "median_hours_to_flag": 18.0,
+     "episodes": 75
+    }
+   },
+   "false_alarms_overall": 0.0040952239489671655,
+   "false_alarms_in_smoke": 0.0029451064038442678,
+   "false_alarms_outside_smoke": 0.004212447805129154
+  },
+  "Interpolation from neighbours": {
+   "by_fault": {
+    "offset": {
+     "detected": 0.625,
+     "median_hours_to_flag": 15.0,
+     "episodes": 72
+    },
+    "drift": {
+     "detected": 0.881578947368421,
+     "median_hours_to_flag": 74.0,
+     "episodes": 76
+    },
+    "stuck": {
+     "detected": 0.25,
+     "median_hours_to_flag": 52.0,
+     "episodes": 72
+    },
+    "noise": {
+     "detected": 1.0,
+     "median_hours_to_flag": 18.0,
+     "episodes": 75
+    }
+   },
+   "false_alarms_overall": 0.004144263454966426,
+   "false_alarms_in_smoke": 0.0032607629695008337,
+   "false_alarms_outside_smoke": 0.004234312801893134
+  },
+  "Own history": {
+   "by_fault": {
+    "offset": {
+     "detected": 0.19444444444444445,
+     "median_hours_to_flag": 17.0,
+     "episodes": 72
+    },
+    "drift": {
+     "detected": 0.21052631578947367,
+     "median_hours_to_flag": 93.0,
+     "episodes": 76
+    },
+    "stuck": {
+     "detected": 0.013888888888888888,
+     "median_hours_to_flag": 10.0,
+     "episodes": 72
+    },
+    "noise": {
+     "detected": 0.9733333333333334,
+     "median_hours_to_flag": 17.0,
+     "episodes": 75
+    }
+   },
+   "false_alarms_overall": 0.003900483251733107,
+   "false_alarms_in_smoke": 0.002586545062273218,
+   "false_alarms_outside_smoke": 0.004034404260051027
+  }
+ }
+}

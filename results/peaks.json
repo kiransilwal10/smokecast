@@ -1,0 +1,47 @@
+[
+ {
+  "place": "New York City",
+  "site": "QUEENS COLLEGE 2",
+  "peak_time": "2023-06-07 18:00:00",
+  "observed_peak": 411.04998779296875,
+  "Persistence 6 h": 93.7315902709961,
+  "Persistence 12 h": 114.9341049194336,
+  "Persistence 24 h": 81.5910873413086,
+  "Ridge per site 6 h": 67.5,
+  "Ridge per site 12 h": 65.4375,
+  "Ridge per site 24 h": 30.46875,
+  "SmokeCast 6 h": 62.75,
+  "SmokeCast 12 h": 37.03125,
+  "SmokeCast 24 h": 25.875
+ },
+ {
+  "place": "Chicago",
+  "site": "REGIONAL OFFICE BUILDING",
+  "peak_time": "2023-06-27 17:00:00",
+  "observed_peak": 221.75,
+  "Persistence 6 h": 124.73899841308594,
+  "Persistence 12 h": 37.35334777832031,
+  "Persistence 24 h": 18.353343963623047,
+  "Ridge per site 6 h": 84.0625,
+  "Ridge per site 12 h": 23.328125,
+  "Ridge per site 24 h": 13.09375,
+  "SmokeCast 6 h": 82.4375,
+  "SmokeCast 12 h": 51.40625,
+  "SmokeCast 24 h": 11.4609375
+ },
+ {
+  "place": "Detroit",
+  "site": "DP4th - Detroit Police 4th Precinct (near GHIB)",
+  "peak_time": "2023-06-28 11:00:00",
+  "observed_peak": 189.5500030517578,
+  "Persistence 6 h": 154.9473876953125,
+  "Persistence 12 h": 164.96475219726562,
+  "Persistence 24 h": 43.54856872558594,
+  "Ridge per site 6 h": 90.125,
+  "Ridge per site 12 h": 61.96875,
+  "Ridge per site 24 h": 18.09375,
+  "SmokeCast 6 h": 48.84375,
+  "SmokeCast 12 h": 18.0625,
+  "SmokeCast 24 h": 7.91796875
+ }
+]

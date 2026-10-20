@@ -1,0 +1,35 @@
+[project]
+name = "smokecast"
+version = "0.1.0"
+description = "Wind-aware graph neural network for wildfire-smoke PM2.5 early warning and sensor fault detection"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Kiran Silwal" }]
+dependencies = [
+    "torch>=2.2",
+    "numpy>=1.26",
+    "pandas>=2.1",
+    "requests>=2.31",
+    "matplotlib>=3.8",
+    "pyyaml>=6.0",
+    "pyshp>=2.3",
+]
+
+[project.optional-dependencies]
+maps = ["cartopy>=0.22", "pillow>=10"]
+serve = ["fastapi>=0.110", "uvicorn>=0.29"]
+dev = ["pytest>=8", "httpx>=0.27"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.setuptools.package-data]
+"smokecast.serve" = ["static/*.html"]

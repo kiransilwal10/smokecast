@@ -1,6 +1,6 @@
 """Train, evaluate and package SmokeCast on a Kaggle GPU.
 
-Inputs come from the private dataset holding data/processed and the code;
+Inputs come from two private datasets, one holding data/processed and one the code;
 everything written under /kaggle/working is kept as the notebook's output.
 """
 
@@ -13,8 +13,9 @@ import time
 
 meta = glob.glob("/kaggle/input/**/processed/meta.json", recursive=True)[0]
 data = os.path.dirname(meta)
-# Kaggle unpacks uploaded archives, so the code arrives as a folder
-code = glob.glob("/kaggle/input/**/code/src/smokecast/train.py", recursive=True)[0].rsplit("/src/", 1)[0]
+# Kaggle unpacks uploaded archives, so the code arrives as a folder (in its own small dataset,
+# so a code change does not mean re-uploading the data)
+code = glob.glob("/kaggle/input/**/smokecast-code/**/src/smokecast/train.py", recursive=True)[0].rsplit("/src/", 1)[0]
 work = "/kaggle/working/smokecast"
 shutil.copytree(code, work, ignore=shutil.ignore_patterns("._*", "*.egg-info"), dirs_exist_ok=True)
 os.chdir(work)

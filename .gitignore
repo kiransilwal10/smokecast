@@ -10,4 +10,5 @@ serving/
 *.log
 kaggle/dataset/processed/
 kaggle/dataset/code*
+kaggle/code_dataset/*.tar.gz
 kaggle/out*/

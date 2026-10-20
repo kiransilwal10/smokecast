@@ -23,7 +23,7 @@ import torch
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 
-from ..dataset import USG, Batcher
+from ..dataset import SMOKE, USG, Batcher
 from ..model import SmokeCast
 
 BUNDLE = Path(os.environ.get("SMOKECAST_BUNDLE", "serving"))
@@ -75,7 +75,8 @@ def sensor_scores(row: int, simulate: int | None = None) -> np.ndarray:
     """Per-site alarm score over the 24 h ending at ``row``; above 1 means the sensor is flagged.
 
     The deviation is (reading - virtual reading) / typical spread. Its |median| catches offsets
-    and drift, the median hour-to-hour jump catches noise; each has its own threshold.
+    and drift, the median hour-to-hour jump catches noise; each has its own threshold, one for
+    clear air and one for hours under satellite smoke.
     """
     b = bundle()
     rows = np.arange(row - HEALTH_WINDOW + 1, row + 1)
@@ -97,7 +98,9 @@ def sensor_scores(row: int, simulate: int | None = None) -> np.ndarray:
     resid = (view.pm[rows] - virtual) / np.maximum(b.spread, 1.0)
     bias = np.abs(np.nanmedian(resid, 0))
     jitter = np.nanmedian(np.abs(np.diff(resid, axis=0)), 0)
-    return np.nan_to_num(np.fmax(bias / b.threshold[0], jitter / b.threshold[1]))
+    smoky = np.asarray(view.x[row, :, SMOKE[0]], dtype=np.float32) >= 0.6  # yesterday's HMS, known now
+    thr = np.where(smoky[None], b.threshold[1], b.threshold[0])          # (statistic, site)
+    return np.nan_to_num(np.fmax(bias / thr[0], jitter / thr[1]))
 
 
 @app.get("/api/health")

@@ -7,20 +7,24 @@ Faults are injected into the test-period record of real monitors, five days each
     stuck    repeats the reading from the first hour (a frozen logger)
     noise    random error with a 10 µg/m³ spread (a failing laser counter)
 
-Two detectors watch the corrupted record:
+Three detectors watch the corrupted record:
 
     own history     robust z-score of each reading against the site's own trailing 14 days
+    interpolation   each reading against an inverse-distance average of its 8 nearest neighbours
     virtual sensor  each reading against SmokeCast's estimate of it from the neighbours,
                     with the site itself hidden from the model
 
 Each detector turns its deviation series into two robust 24 h statistics: the size of the
 median deviation (catches offsets, drift and a stuck reading as the truth moves away) and the
 median hour-to-hour jump (catches noise). Medians shrug off the hour or two of extreme values
-that smoke plumes produce. A site is flagged when either statistic passes its threshold, set
-on clean data so that both detectors raise the same number of false alarms; detection rates
-are then directly comparable.
+that smoke plumes produce. A site is flagged when either statistic passes its threshold.
+Thresholds are set on clean data, separately for clear hours and for hours under satellite
+smoke (known at the time from yesterday's HMS analysis): smoke makes every comparison noisier,
+and one threshold for both would be either deaf in clear air or jumpy in smoke. All detectors
+raise the same number of false alarms in each regime, so detection rates compare directly.
 
     python -m smokecast.faults --run smokecast
+    python -m smokecast.faults --run smokecast --reuse-virtual   # skip the GPU step, use saved estimates
 """
 
 from __future__ import annotations
@@ -35,6 +39,7 @@ import pandas as pd
 import torch
 
 from .dataset import FILL_HOURS, SMOKE, Batcher, SmokeData, ffill
+from .geo import haversine_km
 from .train import build_model, pick_device
 
 KINDS = ("offset", "drift", "stuck", "noise")
@@ -108,9 +113,41 @@ def robust_stats(z: np.ndarray) -> np.ndarray:
     return np.stack([bias.to_numpy(), jitter.to_numpy()])
 
 
-def alarm_score(stats: np.ndarray, thresholds: np.ndarray) -> np.ndarray:
-    """Largest statistic relative to its threshold; above 1 means the site is flagged."""
-    return np.nan_to_num(np.fmax(stats[0] / thresholds[0], stats[1] / thresholds[1]))
+def calibrate(stats: np.ndarray, smoky: np.ndarray) -> np.ndarray:
+    """(regime, statistic, site) thresholds from clean data; regime 0 is clear air, 1 is smoke.
+
+    Each statistic gets half of the false-alarm budget in each regime. Sites that were never
+    under smoke fall back to their all-hours threshold.
+    """
+    overall = np.nanquantile(stats, 1 - FALSE_ALARM_RATE / 2, axis=1)
+    out = np.zeros((2,) + overall.shape)
+    for g, sel in enumerate((~smoky, smoky)):
+        masked = np.where(sel[None], stats, np.nan)
+        enough = sel.sum(0) >= 200
+        with np.errstate(all="ignore"):
+            q = np.nanquantile(np.where(enough[None, None], masked, 0.0), 1 - FALSE_ALARM_RATE / 2, axis=1)
+        out[g] = np.where(enough[None], q, overall)
+    return out
+
+
+def alarm_score(stats: np.ndarray, thresholds: np.ndarray, smoky: np.ndarray) -> np.ndarray:
+    """Largest statistic relative to its threshold for the current regime; above 1 means flagged."""
+    thr = np.where(smoky[None], thresholds[1][:, None, :], thresholds[0][:, None, :])
+    return np.nan_to_num(np.fmax(stats[0] / thr[0], stats[1] / thr[1]))
+
+
+def interpolated_readings(view, rows: np.ndarray, k: int = 8) -> np.ndarray:
+    """Inverse-distance average of the k nearest other sites' current readings."""
+    d = haversine_km(view.lat[:, None], view.lon[:, None], view.lat[None], view.lon[None])
+    np.fill_diagonal(d, np.inf)
+    near = np.argsort(d, 1)[:, :k]
+    w = np.zeros_like(d)
+    w[np.arange(len(d))[:, None], near] = 1.0 / np.maximum(d[np.arange(len(d))[:, None], near], 1.0) ** 2
+    x = np.asarray(view.x[rows, :, :2], dtype=np.float32)
+    valid = (x[..., 1] > 0.5).astype(np.float32)
+    pm = (x[..., 0] * view.sigma + view.mu) * valid
+    weight = valid @ w.T
+    return np.where(weight > 0, (pm @ w.T) / np.maximum(weight, 1e-12), np.nan)
 
 
 def own_history_score(pm: np.ndarray, rows: np.ndarray) -> np.ndarray:
@@ -141,6 +178,7 @@ def main() -> None:
     ap.add_argument("--run-root", type=Path, default=Path("runs"))
     ap.add_argument("--data", type=Path, default=Path("data/processed"))
     ap.add_argument("--out", type=Path, default=Path("results"))
+    ap.add_argument("--reuse-virtual", action="store_true", help="load saved virtual readings instead of recomputing")
     args = ap.parse_args()
 
     data = SmokeData(args.data)
@@ -162,25 +200,28 @@ def main() -> None:
              "faulty": SimpleNamespace(x=x_bad, pm=pm_bad, **common)}
     scores = {}
     for name, view in views.items():
-        print(f"virtual sensor on {name} data", flush=True)
-        virtual = virtual_readings(model, view, rows, colour, device)
-        obs = view.pm[rows]
-        resid = obs - virtual
-        if name == "clean":
-            spread = np.nanmedian(np.abs(resid - np.nanmedian(resid, 0)), 0) * 1.4826
-            np.save(args.run_root / args.run / "virtual_spread.npy", spread)
-            np.save(args.run_root / args.run / "virtual_clean.npy", virtual.astype(np.float16))
+        saved = args.run_root / args.run / f"virtual_{name}.npy"
+        if args.reuse_virtual and saved.exists():
+            virtual = np.load(saved).astype(np.float32)
         else:
-            np.save(args.run_root / args.run / "virtual_faulty.npy", virtual.astype(np.float16))
+            print(f"virtual sensor on {name} data", flush=True)
+            virtual = virtual_readings(model, view, rows, colour, device)
+            np.save(saved, virtual.astype(np.float16))
+        obs = view.pm[rows]
+        resid, resid_idw = obs - virtual, obs - interpolated_readings(view, rows)
+        if name == "clean":  # typical size of each detector's deviation on healthy sensors
+            spread = np.nanmedian(np.abs(resid - np.nanmedian(resid, 0)), 0) * 1.4826
+            spread_idw = np.nanmedian(np.abs(resid_idw - np.nanmedian(resid_idw, 0)), 0) * 1.4826
+            np.save(args.run_root / args.run / "virtual_spread.npy", spread)
         scores[name] = {"Virtual sensor (SmokeCast)": robust_stats(resid / np.maximum(spread, 1.0)),
+                        "Interpolation from neighbours": robust_stats(resid_idw / np.maximum(spread_idw, 1.0)),
                         "Own history": robust_stats(own_history_score(view.pm, rows))}
 
     smoky = (np.asarray(data.x[rows, :, SMOKE[0]], dtype=np.float32) >= 0.6)
     results = {"episodes": len(episodes), "false_alarm_rate": FALSE_ALARM_RATE, "detectors": {}}
     for det in scores["clean"]:
-        # each statistic gets half of the false-alarm budget
-        threshold = np.nanquantile(scores["clean"][det], 1 - FALSE_ALARM_RATE / 2, axis=1)  # (2, N)
-        clean, faulty = (alarm_score(scores[v][det], threshold) for v in ("clean", "faulty"))
+        threshold = calibrate(scores["clean"][det], smoky)  # (regime, statistic, site)
+        clean, faulty = (alarm_score(scores[v][det], threshold, smoky) for v in ("clean", "faulty"))
         flags = clean > 1.0
         results["detectors"][det] = {
             "by_fault": detection(faulty, episodes, rows),

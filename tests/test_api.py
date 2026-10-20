@@ -26,7 +26,7 @@ def client(tmp_path, monkeypatch):
     x = np.zeros((hours, n, len(CHANNELS)), np.float16)
     x[..., 0], x[..., 1] = (pm - mu) / sigma, 1.0
     np.savez(tmp_path / "inputs.npz", x=x, pm=pm.astype(np.float16), mu=mu, sigma=sigma,
-             colour=np.arange(n) % 2, spread=np.full(n, 3.0), threshold=np.full((2, n), 2.0))
+             colour=np.arange(n) % 2, spread=np.full(n, 3.0), threshold=np.full((2, 2, n), 2.0))
     sites = [{"site": f"s{i}", "name": f"Site {i}", "city": "", "state": "", "lat": float(lat[i]), "lon": float(lon[i])}
              for i in range(n)]
     (tmp_path / "meta.json").write_text(json.dumps({"first_hour": "2023-06-01 00:00:00", "sites": sites}))

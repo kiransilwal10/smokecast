@@ -38,12 +38,15 @@ def climatology(data: SmokeData, rows: np.ndarray) -> np.ndarray:
 
 
 def ridge_baseline(data: SmokeData, history: int, t_fit: np.ndarray, t_val: np.ndarray,
-                   t_test: np.ndarray) -> np.ndarray:
-    """Per-site ridge on the site's own flattened inputs; returns test forecasts in µg/m³ (T0, L, N)."""
+                   t_out: list[np.ndarray]) -> list[np.ndarray]:
+    """Per-site ridge on the site's own flattened inputs, penalty picked on ``t_val``.
+
+    Returns forecasts in µg/m³, (len(t), L, N), for each array of issue times in ``t_out``.
+    """
     x = np.asarray(data.x, dtype=np.float32)
     tf = time_features(data.index)
     pm = np.asarray(data.pm)
-    out = np.zeros((len(t_test), len(LEADS), data.n_nodes), np.float32)
+    outs = [np.zeros((len(t), len(LEADS), data.n_nodes), np.float32) for t in t_out]
     leads = np.array(LEADS)
     for n in range(data.n_nodes):
         win = sliding_window_view(x[:, n], history, axis=0)  # (T - history + 1, C, history)
@@ -63,9 +66,9 @@ def ridge_baseline(data: SmokeData, history: int, t_fit: np.ndarray, t_val: np.n
             err = np.nanmean(((Xv @ W - Yv) ** 2)[okv])
             if best is None or err < best[0]:
                 best = (err, W)
-        pred = feats(t_test) @ best[1] + base(t_test)[:, None]
-        out[:, :, n] = data.mu[n] + data.sigma[n] * pred
-    return np.maximum(out, 0.0)
+        for t, out in zip(t_out, outs):
+            out[:, :, n] = data.mu[n] + data.sigma[n] * (feats(t) @ best[1] + base(t)[:, None])
+    return [np.maximum(out, 0.0) for out in outs]
 
 
 def idw_virtual(data: SmokeData, t0: np.ndarray, hidden: np.ndarray, k: int = 8) -> np.ndarray:
@@ -92,12 +95,31 @@ def rmse(pred, obs, mask) -> float:
     return float(np.sqrt(np.mean((pred[m] - obs[m]) ** 2))) if m.any() else float("nan")
 
 
-def exceedance(pred, obs, mask) -> dict:
+def exceedance(pred, obs, mask, level: float = USG) -> dict:
+    """Skill of warning when the forecast exceeds ``level`` for observed PM2.5 above USG."""
     m = mask & np.isfinite(obs)
-    p, o = (pred > USG) & m, (obs > USG) & m
+    p, o = (pred > level) & m, (obs > USG) & m
     hits, misses, false = int((p & o).sum()), int((~p & o).sum()), int((p & ~o).sum())
     return {"hit_rate": hits / max(hits + misses, 1), "false_alarm_ratio": false / max(hits + false, 1),
             "csi": hits / max(hits + misses + false, 1), "events": hits + misses}
+
+
+def tune_warning_level(pred, obs) -> float:
+    """Forecast level above which to warn, chosen to maximise CSI on validation data.
+
+    Models trained on mean-squared error under-forecast peaks, so warning only when the forecast
+    itself passes 35.4 misses most events; every method, baselines included, gets its own level.
+    """
+    m = np.isfinite(obs)
+    p, o = pred[m], obs[m] > USG
+    best = (USG, -1.0)
+    for level in np.arange(10.0, 45.01, 0.5):
+        w = p > level
+        hits, misses, false = (w & o).sum(), (~w & o).sum(), (w & ~o).sum()
+        csi = hits / max(hits + misses + false, 1)
+        if csi > best[1]:
+            best = (float(level), csi)
+    return best[0]
 
 
 def evaluate(runs: list[str], run_root: Path, data_dir: Path, out: Path) -> dict:
@@ -108,21 +130,32 @@ def evaluate(runs: list[str], run_root: Path, data_dir: Path, out: Path) -> dict
     t_train = data.forecast_times(tuple(splits["train"]), history, horizon)
     t_val = data.forecast_times(tuple(splits["val"]), history, horizon, 6)
     t_test = data.forecast_times(tuple(splits["test"]), history, horizon)
+    t_warn = data.forecast_times(tuple(splits["val"]), history, horizon)  # every hour, for warning levels
     pm = np.asarray(data.pm)
+    obs_warn = pm[t_warn[:, None] + np.array(LEADS)]
     obs = pm[t_test[:, None] + np.array(LEADS)]                                   # (T0, L, N)
     x_t0 = np.asarray(data.x[t_test], dtype=np.float32)
     smoky = ((x_t0[..., SMOKE[0]] >= 0.6) | (x_t0[..., SMOKE[1]] >= 0.6))[:, None, :]
     subsets = {"all": np.ones_like(obs, bool), "smoke": np.broadcast_to(smoky, obs.shape),
                "high": np.nan_to_num(obs) > USG}
 
-    forecasts = {}
+    forecasts, warn = {}, {}
     clim = climatology(data, np.arange(t_train[0], t_train[-1]))
-    vt = t_test[:, None] + np.array(LEADS)
-    forecasts["Climatology"] = clim[data.index.month[vt.ravel()] - 1, data.index.hour[vt.ravel()]].reshape(obs.shape)
-    current = np.where(x_t0[..., 1] > 0.5, x_t0[..., 0] * data.sigma + data.mu, data.mu)
-    forecasts["Persistence"] = np.broadcast_to(current[:, None], obs.shape)
+
+    def climatology_at(t0):
+        vt = (t0[:, None] + np.array(LEADS)).ravel()
+        return clim[data.index.month[vt] - 1, data.index.hour[vt]].reshape(len(t0), len(LEADS), -1)
+
+    def persistence_at(t0):
+        x = np.asarray(data.x[t0, :, :2], dtype=np.float32)
+        current = np.where(x[..., 1] > 0.5, x[..., 0] * data.sigma + data.mu, data.mu)
+        return np.broadcast_to(current[:, None], (len(t0), len(LEADS), data.n_nodes))
+
+    forecasts["Climatology"], warn["Climatology"] = climatology_at(t_test), climatology_at(t_warn)
+    forecasts["Persistence"], warn["Persistence"] = persistence_at(t_test), persistence_at(t_warn)
     print("fitting ridge baseline", flush=True)
-    forecasts["Ridge per site"] = ridge_baseline(data, history, t_train[::4], t_val, t_test)
+    warn["Ridge per site"], forecasts["Ridge per site"] = ridge_baseline(data, history, t_train[::4], t_val,
+                                                                         [t_warn, t_test])
     np.save(run_root / "ridge_test_pred.npy", forecasts["Ridge per site"].astype(np.float16))
 
     models = {}
@@ -137,16 +170,19 @@ def evaluate(runs: list[str], run_root: Path, data_dir: Path, out: Path) -> dict
         pred = np.maximum(data.mu + data.sigma * norm, 0.0)
         np.save(run_root / name / "test_pred.npy", pred.astype(np.float16))
         forecasts[LABELS.get(name, name)] = pred[:, 1:]
+        warn[LABELS.get(name, name)] = np.maximum(data.mu + data.sigma * predict(model, batcher, t_warn, leads=LEADS), 0.0)
 
     results = {"leads": list(LEADS), "n_points": {k: int((v & np.isfinite(obs)).sum()) for k, v in subsets.items()},
-               "rmse": {}, "exceedance": {}}
+               "rmse": {}, "exceedance": {}, "warning_level": {}}
     for subset, m in subsets.items():
         results["rmse"][subset] = {name: {"by_lead": {l: rmse(f[:, i], obs[:, i], m[:, i]) for i, l in enumerate(LEADS)},
                                           "mean": float(np.mean([rmse(f[:, i], obs[:, i], m[:, i])
                                                                  for i in range(len(LEADS))]))}
                                    for name, f in forecasts.items()}
     for name, f in forecasts.items():
-        results["exceedance"][name] = {l: exceedance(f[:, i], obs[:, i], np.ones_like(obs[:, i], bool))
+        levels = {l: tune_warning_level(warn[name][:, i], obs_warn[:, i]) for i, l in enumerate(LEADS)}
+        results["warning_level"][name] = levels
+        results["exceedance"][name] = {l: exceedance(f[:, i], obs[:, i], np.ones_like(obs[:, i], bool), levels[l])
                                        for i, l in enumerate(LEADS)}
 
     # virtual sensor: hide 30% of sites and estimate their current reading from the rest
@@ -192,7 +228,8 @@ def markdown_tables(results: dict) -> str:
             cells = [f"**{v['by_lead'][l]:.2f}**" if np.isclose(v["by_lead"][l], best[l]) else f"{v['by_lead'][l]:.2f}"
                      for l in leads]
             lines.append(f"| {name} | " + " | ".join(cells) + f" | {v['mean']:.2f} |")
-    lines += [f"\n**Early warning: hourly PM2.5 above {USG} µg/m³** (critical success index / hit rate / false-alarm ratio)\n",
+    lines += [f"\n**Early warning: hourly PM2.5 above {USG} µg/m³** (critical success index / hit rate / false-alarm ratio; "
+              "each method warns above its own forecast level, tuned on 2022)\n",
               "| Model | " + " | ".join(f"{l} h" for l in leads) + " |", "|---|" + "---:|" * len(leads)]
     for name, by_lead in results["exceedance"].items():
         lines.append(f"| {name} | " + " | ".join(

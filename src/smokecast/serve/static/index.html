@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SmokeCast</title>
+<link rel="icon" href="data:,">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
@@ -45,8 +46,8 @@
       <button data-t="2023-06-27T00:00">Chicago, Jun 2023</button>
       <button data-t="2025-06-05T00:00">Midwest, Jun 2025</button>
     </div>
-    <label for="lead">Lead time: <span id="leadText">24 h</span></label>
-    <input id="lead" type="range" min="0" max="72" value="24">
+    <label for="lead">Lead time: <span id="leadText">6 h</span></label>
+    <input id="lead" type="range" min="0" max="72" value="6">
     <div class="legend muted" id="legend"></div>
 
     <h2>Alerts, next 24 h</h2>
@@ -65,8 +66,8 @@ const colour = v => v == null ? "#bbbbbb" : AQI.find(([hi]) => v <= hi)[1];
 document.getElementById("legend").innerHTML = AQI.map(([hi, c, name]) => `<div><span style="background:${c}"></span>${name}</div>`).join("");
 
 const map = L.map("map").setView([39.5, -82], 5);
-L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
-  {attribution: "&copy; OpenStreetMap, &copy; CARTO", maxZoom: 12}).addTo(map);
+L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}",
+  {attribution: "Tiles &copy; Esri &mdash; Esri, HERE, Garmin, &copy; OpenStreetMap contributors", maxZoom: 12}).addTo(map);
 
 let sites = [], markers = {}, latest = null;
 const label = s => `${s.name || s.site}${s.city ? ", " + s.city : ""}${s.state ? ", " + s.state : ""}`;

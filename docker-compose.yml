@@ -3,7 +3,7 @@ services:
     build: .
     image: smokecast:latest
     ports:
-      - "8000:8000"
+      - "${SMOKECAST_PORT:-8000}:8000"   # SMOKECAST_PORT=8020 docker compose up, if 8000 is taken
     volumes:
       - ./serving:/app/serving:ro   # written by scripts/export_serving.py
     healthcheck:
